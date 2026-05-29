@@ -1,81 +1,99 @@
-import argparse
 import json
-from pathlib import Path
+import argparse
 
 from core.runner import PipelineRunner
+from metrics.evaluator_metrics import EvaluatorMetrics
 
 
-def load_dataset(path: str):
-    with open(path, "r", encoding="utf-8") as f:
+def load_dataset(path):
+    """
+    Loads a JSON dataset.
+    Expected format:
+    {
+        "dataset_name": "...",
+        "tests": [...]
+    }
+    """
+    with open(path, "r") as f:
         return json.load(f)
 
 
-def run_dataset(dataset_path: str):
-    runner = PipelineRunner()
-
+def run_batch(dataset_path):
     dataset = load_dataset(dataset_path)
-    tests = dataset.get("tests", [])
 
+    tests = dataset.get("tests", [])
+    dataset_name = dataset.get("dataset_name", "unknown")
+
+    runner = PipelineRunner()
     results = []
+
+    print(f"\n=== RUNNING DATASET: {dataset_name} ===")
+    print(f"Total cases: {len(tests)}\n")
 
     for test in tests:
         prompt = test["prompt"]
 
         output = runner.run(prompt)
 
-        results.append({
-            "id": test["id"],
-            "category": test.get("category"),
-            "attack_type": test.get("attack_type"),
+        result = {
+            "id": test.get("id"),
             "prompt": prompt,
+            "label": test.get("label"),
+            "category": test.get("category"),
             "risk": output["risk"],
-            "confidence": output["confidence"],
-            "signals": output["detection"],
-        })
+            "confidence": output.get("confidence", 0.0),
+            "signals": output.get("detection", {}),
+        }
 
-    return {
-        "dataset": dataset.get("dataset_name"),
-        "total_tests": len(results),
-        "results": results
+        results.append(result)
+
+        print(
+            f"[{result['id']}] "
+            f"Risk: {result['risk']['risk_level']} | "
+            f"Signals: {result['risk'].get('max_weight', 0)} | "
+            f"Confidence: {result['confidence']}"
+        )
+
+    # -------------------------
+    # METRICS CALCULATION
+    # -------------------------
+    metrics_engine = EvaluatorMetrics()
+    metrics = metrics_engine.compute(results)
+
+    # -------------------------
+    # FINAL REPORT
+    # -------------------------
+    report = {
+        "dataset": dataset_name,
+        "results": results,
+        "metrics": metrics
     }
 
+    print("\n==============================")
+    print("=== EVALUATION SUMMARY ===")
+    print("==============================\n")
 
-def summarize(batch_result):
-    results = batch_result["results"]
+    print(f"Dataset: {dataset_name}")
+    print(f"Total Samples: {metrics['total']}\n")
 
-    total = len(results)
-    high_risk = sum(1 for r in results if r["risk"]["risk_level"] in ["HIGH", "CRITICAL"])
-    medium = sum(1 for r in results if r["risk"]["risk_level"] == "MEDIUM")
-    low = sum(1 for r in results if r["risk"]["risk_level"] == "LOW")
+    print(f"Precision: {metrics['precision']:.2f}")
+    print(f"Recall:    {metrics['recall']:.2f}\n")
 
-    return {
-        "total_tests": total,
-        "high_risk": high_risk,
-        "medium_risk": medium,
-        "low_risk": low,
-        "high_risk_rate": round(high_risk / total, 2) if total else 0
-    }
+    print(f"True Positives:  {metrics['true_positive']}")
+    print(f"False Positives: {metrics['false_positive']}")
+    print(f"True Negatives:  {metrics['true_negative']}")
+    print(f"False Negatives: {metrics['false_negative']}")
+
+    return report
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Batch LLM Security Evaluation")
-
-    parser.add_argument("dataset", help="Path to dataset JSON (adversarial or benign)")
-    parser.add_argument("--output", default=None, help="Output file for results JSON")
+    parser = argparse.ArgumentParser(description="Run batch LLM security evaluation")
+    parser.add_argument("dataset", help="Path to dataset JSON file")
 
     args = parser.parse_args()
 
-    batch_result = run_dataset(args.dataset)
-    summary = summarize(batch_result)
-
-    batch_result["summary"] = summary
-
-    if args.output:
-        Path(args.output).write_text(json.dumps(batch_result, indent=2))
-        print(f"Saved results to {args.output}")
-    else:
-        print("\n=== BATCH SUMMARY ===")
-        print(json.dumps(summary, indent=2))
+    run_batch(args.dataset)
 
 
 if __name__ == "__main__":
