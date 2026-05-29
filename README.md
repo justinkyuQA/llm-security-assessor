@@ -1,4 +1,3 @@
-# llm-security-assessor
 # LLM Security Assessor
 
 A structured framework for evaluating Large Language Model behavior under adversarial, safety-critical, and prompt-injection conditions.
